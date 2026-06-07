@@ -1,0 +1,413 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{parskip}
+
+\title{Moving-Average Trading Signal}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{Idea}
+A moving-average signal is a simple rule-based classifier for a price time series. It transforms historical prices into a binary decision:
+\[
+    s_t =
+    \begin{cases}
+    1, & \text{invest / hold the stock},\\
+    0, & \text{do not invest / stay out.}
+    \end{cases}
+\]
+
+The signal compares a short-term moving average with a long-term moving average. The short-term average represents the recent price level, while the long-term average represents the broader baseline.
+
+\section*{Moving Average Formula}
+For a stock price series $P_t$, the moving average with window length $w$ is
+\[
+    MA_t^{(w)} = \frac{1}{w} \sum_{i=0}^{w-1} P_{t-i}.
+\]
+This is a trailing average, meaning that only the current and past prices are used.
+
+\section*{Signal Rule}
+The moving-average crossover signal is defined as
+\[
+    s_t =
+    \begin{cases}
+    1, & \text{if } MA_t^{(short)} > MA_t^{(long)},\\
+    0, & \text{otherwise.}
+    \end{cases}
+\]
+
+In words: if the recent average price is above the longer-term average price, the stock is classified as being in a positive trend.
+
+\section*{Small Example}
+Assume the prices over five days are:
+\[
+100,\; 101,\; 102,\; 105,\; 108.
+\]
+Using a short window of 3 days and a long window of 5 days, the moving averages on day 5 are
+\[
+    MA_5^{(3)} = \frac{102 + 105 + 108}{3} = 105,
+\]
+\[
+    MA_5^{(5)} = \frac{100 + 101 + 102 + 105 + 108}{5} = 103.2.
+\]
+Since
+\[
+    105 > 103.2,
+\]
+the signal is
+\[
+    s_5 = 1.
+\]
+So the rule would decide to invest on day 5.
+
+\section*{Data Science Interpretation}
+The moving average itself is a feature-engineering step. The full signal is the decision rule that compares two engineered features:
+\[
+    \text{short-term trend feature} > \text{long-term baseline feature}.
+\]
+Therefore, the signal behaves like a simple rule-based binary classifier for time-series data.
+
+
+\section{Volatility-Filtered Time-Series Momentum Signal}
+
+The signal is motivated by Moskowitz, Ooi, and Pedersen (2012), who document
+time-series momentum: an asset's own past return can contain information about
+its future return. Their original strategy uses the sign of the asset's past
+return to determine the trading direction and scales the position size by
+inverse ex-ante volatility.
+
+Let \(P_t\) denote the adjusted close price at time \(t\). We define the
+lookback return over \(k\) trading days as
+
+\[
+R_{t-k,t} = \frac{P_t}{P_{t-k}} - 1.
+\]
+
+Daily returns are defined as
+
+\[
+r_t = \frac{P_t}{P_{t-1}} - 1.
+\]
+
+Recent volatility over a window of \(w\) trading days is estimated by
+
+\[
+\sigma_t =
+\sqrt{
+\frac{1}{w}
+\sum_{i=0}^{w-1}
+(r_{t-i} - \bar{r}_t)^2
+}.
+\]
+
+Because our assessment framework uses binary long-only signals, we adapt the
+original long/short and volatility-scaled framework into a 0/1 rule:
+
+\[
+s_t =
+\begin{cases}
+1, & \text{if } R_{t-k,t} > 0 \text{ and } \sigma_t < c, \\
+0, & \text{otherwise}.
+\end{cases}
+\]
+
+Thus, the strategy invests only when the asset has positive recent momentum and
+recent volatility is below the chosen threshold \(c\). This volatility filter is
+not identical to the inverse-volatility position sizing in Moskowitz, Ooi, and
+Pedersen (2012), but it is a simplified adaptation that fits the binary signal
+structure of our assessment notebook.
+
+
+\section{Trading-Range Breakout Signal}
+
+The trading-range breakout signal is motivated by Brock, Lakonishok, and
+LeBaron (1992), who study simple technical trading rules on the Dow Jones
+Index. Besides moving-average rules, they explicitly analyze trading-range
+break rules. In their description, a buy signal is generated when the price
+breaks above a resistance level, where the resistance level is defined as a
+local maximum. They also test versions based on past 50, 150, and 200 trading
+days and versions with and without a one percent band \cite[p.~1736]{brock1992}.
+
+For our binary long-only assessment framework, we adapt this idea into an
+invest-or-stay-out rule. Let $P_t$ denote the adjusted close price at time $t$.
+For a breakout window of length $n$, the recent resistance level is defined as
+
+\[
+H_t^{(n)} = \max\{P_{t-n}, P_{t-n+1}, \ldots, P_{t-1}\}.
+\]
+
+The current price $P_t$ is intentionally not included in this maximum. This
+avoids look-ahead bias and makes the rule compare today's price only with
+information that was already available before day $t$.
+
+The breakout strength can be written as
+
+\[
+B_t^{(n)} = \frac{P_t}{H_t^{(n)}} - 1.
+\]
+
+A positive value of $B_t^{(n)}$ means that today's price is above the highest
+price observed during the previous $n$ trading days. The binary trading signal
+is then defined as
+
+\[
+s_t =
+\begin{cases}
+1, & \text{if } P_t > H_t^{(n)}, \\
+0, & \text{otherwise.}
+\end{cases}
+\]
+
+In words, the strategy invests only when the stock reaches a new recent high.
+This makes the breakout signal different from the moving-average signal. The
+moving-average signal compares the price level with an average baseline, while
+the breakout signal compares the price level with an extreme historical value,
+namely the recent maximum. Therefore, the breakout rule is stricter: a stock can
+be above its moving average without breaking above its previous high.
+
+\subsection*{Economic Reasoning}
+
+The economic intuition is that a breakout above the recent maximum may indicate
+strong buying pressure and trend continuation. In technical-analysis language,
+the recent maximum is interpreted as a resistance level: if the price rises above
+this level, the previous selling pressure has been overcome. Brock, Lakonishok,
+and LeBaron (1992) describe this as a trading-range break-out rule and motivate
+it by the idea that prices breaking above previous peaks can generate buy
+signals \cite[p.~1736]{brock1992}.
+
+For our project, the signal is important because it provides a second
+trend-following rule that is not based on a rolling average. From a data science
+perspective, it is a transparent rule-based classifier using an engineered
+extreme-value feature. The assessment requires economic reasoning, reasonable
+statistics, and convincing empirical evidence for the chosen signals and their
+parameters. This signal is appropriate because its parameter $n$ has a clear
+interpretation as the number of past trading days used to define the resistance
+level.
+
+\subsection*{Small Example}
+
+Assume the following price series:
+
+\[
+100,\; 110,\; 90,\; 101.
+\]
+
+Using a breakout window of $n=3$, the resistance level on day 4 is
+
+\[
+H_4^{(3)} = \max\{100, 110, 90\} = 110.
+\]
+
+The breakout strength is
+
+\[
+B_4^{(3)} = \frac{101}{110} - 1 = -0.0818.
+\]
+
+Since
+
+\[
+101 < 110,
+\]
+
+the trading-range breakout signal is
+
+\[
+s_4 = 0.
+\]
+
+Thus, the strategy does not invest on day 4. This example also shows why the
+breakout rule is stricter than a moving-average rule. The three-day average of
+$100$, $110$, and $90$ is $100$, so the price $101$ is above the moving average.
+However, it is still below the recent maximum of $110$, so there is no breakout.
+
+\subsection*{Parameter Choice}
+
+Following the original paper, natural candidate windows are $n=50$, $n=150$,
+and $n=200$ trading days \cite[p.~1736]{brock1992}. In our empirical notebook,
+we can additionally test a shorter window such as $n=20$, which approximately
+represents one trading month. The parameters can then be compared in-sample and
+evaluated out-of-sample using the same performance statistics and graphs as for
+the other trading signals.
+
+\section{Short-Term Reversal Signal}
+
+The short-term reversal signal is motivated by the empirical literature on
+predictable return reversals. The main economic idea is different from the
+trend-following signals above. Moving-average, volatility-filtered momentum,
+and breakout signals invest after price strength. The reversal signal instead
+invests after short-term price weakness.
+
+Jegadeesh (1990) provides evidence that individual stock returns are predictable
+from past returns. In the abstract and empirical results, he reports highly
+significant negative first-order serial correlation in monthly stock returns
+\cite[p.~881]{jegadeesh1990}. This means that, at the one-month horizon, high
+past returns tend to be followed by lower future returns and low past returns
+tend to be followed by higher future returns. In his portfolio test labelled
+strategy $S1$, securities are ranked in ascending order based on their one-month
+lagged returns \cite[pp.~887--888]{jegadeesh1990}. This is the direct reversal
+logic: recent losers are placed in the highest predicted-return portfolio.
+
+Lehmann (1990) studies the same mechanism at a shorter weekly horizon. He states
+that one-week winners and losers experience sizeable reversals in the following
+week \cite[p.~1]{lehmann1990}. His empirical strategy gives negative weights to
+recent winners and positive weights to recent losers, so that the portfolio earns
+profits if short-term returns reverse \cite[p.~3]{lehmann1990}. In the original
+cross-sectional formulation, the portfolio weight is proportional to the negative
+of the stock's return relative to the equal-weighted market return:
+
+\[
+W_{i,t-k}
+=
+-\left(R_{i,t-k} - \bar{R}_{t-k}\right),
+\]
+
+where $R_{i,t-k}$ is the return of stock $i$ in the previous period and
+$\bar{R}_{t-k}$ is the equal-weighted average return across the stock universe
+\cite[p.~4]{lehmann1990}. If a stock was a winner relative to the average, then
+$R_{i,t-k} - \bar{R}_{t-k} > 0$ and the weight becomes negative. If a stock was a
+loser relative to the average, then $R_{i,t-k} - \bar{R}_{t-k} < 0$ and the
+weight becomes positive. Thus, the original paper implements a long-short
+cross-sectional reversal strategy.
+
+Our assessment notebook uses single-asset, long-only binary signals. Therefore,
+we adapt the same reversal mechanism into an invest-or-stay-out rule. Let
+$P_t$ denote the adjusted close price and let $k$ be the lookback window. The
+recent return is
+
+\[
+R_{t,k} = \frac{P_t}{P_{t-k}} - 1.
+\]
+
+A negative value of $R_{t,k}$ means that the stock has lost value over the last
+$k$ trading days. The entry rule is defined as
+
+\[
+e_t =
+\begin{cases}
+1, & \text{if } R_{t,k} < \theta, \\
+0, & \text{otherwise},
+\end{cases}
+\]
+
+where $\theta < 0$ is the reversal threshold. For example, $\theta=-0.05$ means
+that the signal is triggered only after a loss of more than five percent over the
+lookback window.
+
+To make the signal closer to the predictive logic of the papers, the strategy
+uses a fixed holding period $h$. If an entry signal occurs at time $t$, the
+strategy remains invested for the next $h$ signal observations:
+
+\[
+s_{t+j}=1
+\quad \text{for} \quad
+j = 0,1,\ldots,h-1
+\quad \text{if} \quad e_t = 1.
+\]
+
+Otherwise, the strategy stays out of the stock:
+
+\[
+s_t = 0.
+\]
+
+In the Python implementation, overlapping entry signals are allowed. If a new
+entry occurs while the strategy is already invested, the signal simply remains
+at one for the relevant holding-period interval.
+
+\subsection*{Economic Reasoning}
+
+The economic interpretation is that large negative short-term returns may partly
+reflect temporary overreaction, liquidity pressure, or order-flow imbalances
+rather than a permanent decline in fundamental value. If the price decline is
+partly temporary, the following period may contain a partial rebound. This is why
+Lehmann's original strategy buys recent losers and shorts recent winners, and why
+Jegadeesh's one-month reversal strategy ranks securities with low lagged returns
+more favorably.
+
+For our project, the signal is useful because it provides a genuinely different
+economic mechanism from the previous signals. The previous rules are mainly
+trend-following. This rule is contrarian: it buys after weakness rather than
+after strength. From a data science perspective, the engineered feature is a
+lagged return, and the classifier activates when this feature falls below a
+negative threshold.
+
+\subsection*{Small Example}
+
+Assume the following prices over six trading days:
+
+\[
+100,\;98,\;97,\;96,\;95,\;94.
+\]
+
+Let the lookback window be $k=5$ and the threshold be $\theta=-0.05$. On day 6,
+the five-day return is
+
+\[
+R_{6,5} = \frac{94}{100} - 1 = -0.06.
+\]
+
+Since
+
+\[
+-0.06 < -0.05,
+\]
+
+the entry signal is
+
+\[
+e_6 = 1.
+\]
+
+With a holding period of $h=5$, the strategy remains invested for five signal
+observations after the reversal event. In words: the stock lost more than five
+percent over one trading week, so the strategy classifies the stock as strongly
+oversold and invests in expectation of a short-term correction.
+
+\subsection*{Parameter Choice}
+
+Natural candidate lookback windows are $k=5$, $k=10$, and $k=20$, corresponding
+approximately to one week, two weeks, and one trading month. Natural thresholds
+are $\theta=-0.03$, $\theta=-0.05$, $\theta=-0.08$, and $\theta=-0.10$. A simple
+baseline choice is
+
+\[
+k=5, \qquad \theta=-0.05, \qquad h=5.
+\]
+
+This means: if the stock loses more than five percent over the previous trading
+week, invest for the next trading week. The parameters should be calibrated
+in-sample and then evaluated out-of-sample using the same performance statistics
+and graphs as the other signals.
+
+\begin{thebibliography}{9}
+
+\bibitem{brock1992}
+Brock, W., Lakonishok, J., and LeBaron, B. (1992).
+\textit{Simple Technical Trading Rules and the Stochastic Properties of Stock Returns}.
+The Journal of Finance, 47(5), 1731--1764.
+
+\bibitem{moskowitz2012}
+Moskowitz, T. J., Ooi, Y. H., and Pedersen, L. H. (2012).
+\textit{Time Series Momentum}.
+Journal of Financial Economics, 104(2), 228--250.
+
+
+\bibitem{jegadeesh1990}
+Jegadeesh, N. (1990).
+\textit{Evidence of Predictable Behavior of Security Returns}.
+The Journal of Finance, 45(3), 881--898.
+
+\bibitem{lehmann1990}
+Lehmann, B. N. (1990).
+\textit{Fads, Martingales, and Market Efficiency}.
+The Quarterly Journal of Economics, 105(1), 1--28.
+
+\end{thebibliography}
+
+
+\end{document}
