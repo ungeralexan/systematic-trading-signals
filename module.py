@@ -61,6 +61,8 @@ def download_stock_price_data(tickers, start_date, end_date):
 
     return df_prices, df_price_changes
 
+
+
 def moving_average(values, window_length):
     """
     Compute a trailing moving average using only current and past values.
@@ -100,6 +102,16 @@ def moving_average(values, window_length):
     averages[window_length - 1:] = window_sums / window_length
 
     return averages
+
+
+def lag_signal_for_trading(signal):
+    """
+    Shift signal by one observation to avoid same-day execution bias.
+    A signal observed at time t can only be traded from time t+1 onward.
+    """
+    tradable_signal = np.roll(signal, 1)
+    tradable_signal[0] = 0.0
+    return tradable_signal
 
 ####################################################
 # Helping functions volatility filtered momentum signal
@@ -201,9 +213,13 @@ def volatility_filtered_momentum_signal(
         0.0,
     )
 
+    raw_signal = signal
+    signal = lag_signal_for_trading(raw_signal)
+    
     position_change = np.diff(signal, prepend=0.0)
-
+    
     signals = pd.DataFrame(index=series.index)
+    signals["raw_signal"] = raw_signal
     signals["signal"] = signal
     signals["position_change"] = position_change
     signals["lookback_return"] = lookback_return
@@ -245,9 +261,13 @@ def trading_range_breakout_signal(series, breakout_window):
         else:
             signal[t] = 0.0
 
+    raw_signal = signal
+    signal = lag_signal_for_trading(raw_signal)
+    
     position_change = np.diff(signal, prepend=0.0)
-
+    
     signals = pd.DataFrame(index=series.index)
+    signals["raw_signal"] = raw_signal
     signals["signal"] = signal
     signals["position_change"] = position_change
     signals["recent_high"] = recent_high
@@ -343,9 +363,12 @@ def short_term_reversal_signal(
             end_index = min(start_index + holding_period, prices.shape[0])
             signal[start_index:end_index] = 1.0
 
+    raw_signal = signal
+    signal = lag_signal_for_trading(raw_signal)
     position_change = np.diff(signal, prepend=0.0)
-
+    
     signals = pd.DataFrame(index=series.index)
+    signals["raw_signal"] = raw_signal
     signals["signal"] = signal
     signals["position_change"] = position_change
     signals["lookback_return"] = lookback_return
@@ -407,9 +430,13 @@ def ma_signal(series, short_window, long_window):
         0.0,
     )
 
+    raw_signal = signal
+    signal = lag_signal_for_trading(raw_signal)
+    
     position_change = np.diff(signal, prepend=0.0)
-
+    
     signals = pd.DataFrame(index=series.index)
+    signals["raw_signal"]      = raw_signal
     signals["signal"]          = signal
     signals["position_change"] = position_change
     signals["ma_short"]        = ma_short
