@@ -1,605 +1,419 @@
-"""
-Reusable helper functions for the Computational Finance assessment.
-
-The notebooks should contain the story, explanations, graphs, and final results.
-This module should contain reusable code only: data download, signal functions,
-and performance/statistics functions.
-
-Important assessment hint:
-Use NumPy for numerical computations. Pandas is used here mainly to keep the
-same date index and column names as the input data.
-"""
-
 import numpy as np
 import pandas as pd
 from yahooquery import Ticker
 
 
-# ---------------------------------------------------------------------------
-# DATA DOWNLOAD
-# ---------------------------------------------------------------------------
-
 def download_stock_price_data(tickers, start_date, end_date):
-    """
-    Download adjusted close prices from Yahoo Finance and compute daily
-    multiplicative price changes.
-
-    Parameters
-    ----------
-    tickers : list[str]
-        Example: ['AAPL', 'MSFT', 'AMZN', '^GSPC'].
-    start_date : str
-        Start date in format 'YYYY-MM-DD'.
-    end_date : str
-        End date in format 'YYYY-MM-DD'.
-
-    Returns
-    -------
-    df_prices : pandas.DataFrame
-        Adjusted close prices. Rows are dates, columns are tickers.
-    df_price_changes : pandas.DataFrame
-        Daily multiplicative changes. Example: 1.02 means +2%, 0.98 means -2%.
-    """
     raw = Ticker(tickers).history(start=start_date, end=end_date)
+    close_prices = raw["close"].unstack(level=0)
 
-    # Convert Yahoo output into a normal table: rows = dates, columns = tickers.
-    df_prices = raw["adjclose"].unstack(level=0)
-    df_prices = df_prices.dropna()
+    if "adjclose" in raw.columns:
+        adjusted_prices = raw["adjclose"].unstack(level=0)
+        df_prices = adjusted_prices.where(~adjusted_prices.isna(), close_prices)
+    else:
+        df_prices = close_prices
 
+    df_prices = df_prices[tickers].dropna()
+    df_prices.index = pd.to_datetime(df_prices.index)
+
+    return df_prices, price_changes_from_price_frame(df_prices)
+
+
+def price_changes_from_price_frame(df_prices):
     prices = df_prices.to_numpy(dtype=float)
 
-    # Compute price_t / price_{t-1}. The first row has no previous day, so we set
-    # it to 1.0, meaning no change on the first observation.
-    price_changes = np.ones_like(prices)
+    price_changes = np.ones(prices.shape)
     price_changes[1:, :] = prices[1:, :] / prices[:-1, :]
 
-    df_price_changes = pd.DataFrame(
-        data=price_changes,
-        index=df_prices.index,
-        columns=df_prices.columns,
+    df_price_changes = df_prices.copy(deep=True)
+    df_price_changes[:] = price_changes
+
+    return df_price_changes
+
+
+def moving_average(price_series, window_length):
+    prices = price_series.to_numpy(dtype=float)
+
+    average = np.full(len(prices), np.nan)
+
+    for index in range(window_length - 1, len(prices)):
+        average[index] = np.sum(
+            prices[index - window_length + 1:index + 1]
+        ) / window_length
+
+    return pd.Series(average, index=price_series.index)
+
+
+def price_momentum(price_series, lookback_window):
+    prices = price_series.to_numpy(dtype=float)
+
+    momentum = np.full(len(prices), np.nan)
+    momentum[lookback_window:] = (
+        prices[lookback_window:] / prices[:-lookback_window] - 1.0
     )
 
-    return df_prices, df_price_changes
+    return pd.Series(momentum, index=price_series.index)
 
 
+def portfolio_returns_from_values(portfolio_values):
+    values = np.asarray(portfolio_values, dtype=float)
+    return values[1:] / values[:-1] - 1.0
 
-def moving_average(values, window_length):
-    """
-    Compute a trailing moving average using only current and past values.
 
-    This avoids data leakage: the value at time t only uses observations from
-    t, t-1, ..., t-window_length+1.
+def annualized_return(portfolio_values, periods_per_year=250):
+    values = np.asarray(portfolio_values, dtype=float)
 
-    Parameters
-    ----------
-    values : array-like
-        One-dimensional time series.
-    window_length : int
-        Number of observations used in the moving average.
+    total_growth = values[-1] / values[0]
+    number_of_periods = len(values) - 1
 
-    Returns
-    -------
-    averages : numpy.ndarray
-        Moving average series. The first window_length - 1 entries are np.nan
-        because there is not enough past data yet.
-    """
-    values = np.asarray(values, dtype=float)
-
-    if window_length <= 0:
-        raise ValueError("window_length must be positive.")
-
-    if values.ndim != 1:
-        raise ValueError("moving_average expects a one-dimensional array.")
-
-    averages = np.full(values.shape[0], np.nan)
-
-    if values.shape[0] < window_length:
-        return averages
-
-    # Cumulative sums allow us to compute rolling window sums efficiently.
-    cumulative_sum = np.cumsum(np.insert(values, 0, 0.0))
-    window_sums = cumulative_sum[window_length:] - cumulative_sum[:-window_length]
-    averages[window_length - 1:] = window_sums / window_length
-
-    return averages
-
-
-def lag_signal_for_trading(signal):
-    """
-    Shift signal by one observation to avoid same-day execution bias.
-    A signal observed at time t can only be traded from time t+1 onward.
-    """
-    tradable_signal = np.roll(signal, 1)
-    tradable_signal[0] = 0.0
-    return tradable_signal
-
-####################################################
-# Helping functions volatility filtered momentum signal
-####################################################
-def percentage_change(values, lookback_window):
-    """
-    Compute percentage change over a fixed lookback window.
-
-    Example:
-    If price today is 180 and price 120 days ago was 150,
-    the result is 180 / 150 - 1 = 0.20.
-    """
-    values = np.asarray(values, dtype=float)
-
-    if lookback_window <= 0:
-        raise ValueError("lookback_window must be positive.")
-
-    changes = np.full(values.shape[0], np.nan)
-
-    if values.shape[0] <= lookback_window:
-        return changes
-
-    changes[lookback_window:] = (
-        values[lookback_window:] / values[:-lookback_window] - 1.0
-    )
-
-    return changes
-
-def rolling_standard_deviation(values, window_length):
-    """
-    Compute a trailing rolling standard deviation using NumPy.
-
-    The value at time t only uses information from time t and earlier.
-    """
-    values = np.asarray(values, dtype=float)
-
-    if window_length <= 0:
-        raise ValueError("window_length must be positive.")
-
-    rolling_std = np.full(values.shape[0], np.nan)
-
-    if values.shape[0] < window_length:
-        return rolling_std
-
-    for end_index in range(window_length - 1, values.shape[0]):
-        start_index = end_index - window_length + 1
-        window = values[start_index:end_index + 1]
-        rolling_std[end_index] = np.std(window)
-
-    return rolling_std
-
-def volatility_filtered_momentum_signal(
-    series,
-    momentum_window,
-    volatility_window,
-    volatility_threshold,
-):
-    """
-    Volatility-filtered time-series momentum signal.
-
-    Signal rule:
-    signal_t = 1 if:
-        price_t > price_{t-momentum_window}
-        AND recent_volatility_t < volatility_threshold
-
-    signal_t = 0 otherwise.
-
-    Data science interpretation:
-    This is a binary classifier based on two engineered features:
-    1. lookback_return: trend feature
-    2. recent_volatility: noise/stability feature
-    """
-    prices = series.to_numpy(dtype=float)
-
-    # Daily simple returns, e.g. 0.02 means +2%.
-    daily_returns = np.full(prices.shape[0], np.nan)
-    daily_returns[1:] = prices[1:] / prices[:-1] - 1.0
-
-    # Feature 1: momentum / past return
-    lookback_return = percentage_change(prices, momentum_window)
-
-    # Feature 2: recent volatility / recent noise
-    recent_volatility = rolling_standard_deviation(
-        daily_returns,
-        volatility_window
-    )
-
-    signal = np.zeros(prices.shape[0])
-
-    # Only compute signals when both features are available.
-    valid_rows = ~np.isnan(lookback_return) & ~np.isnan(recent_volatility)
-
-    positive_momentum = lookback_return > 0.0
-    acceptable_volatility = recent_volatility < volatility_threshold
-
-    signal[valid_rows] = np.where(
-        positive_momentum[valid_rows] & acceptable_volatility[valid_rows],
-        1.0,
-        0.0,
-    )
-
-    raw_signal = signal
-    signal = lag_signal_for_trading(raw_signal)
-    
-    position_change = np.diff(signal, prepend=0.0)
-    
-    signals = pd.DataFrame(index=series.index)
-    signals["raw_signal"] = raw_signal
-    signals["signal"] = signal
-    signals["position_change"] = position_change
-    signals["lookback_return"] = lookback_return
-    signals["recent_volatility"] = recent_volatility
-
-    return signals
-
-
-####################################################
-# Trading range breakout function 
-####################################################
-# Based on Brock, Lakonishok and LBaron (1992)
-def trading_range_breakout_signal(series, breakout_window):
-    """
-    Long-only trading-range breakout signal.
-
-    signal_t = 1 if price_t is greater than the maximum price over the
-    previous breakout_window days.
-    signal_t = 0 otherwise.
-
-    Data science interpretation:
-    This is a binary classifier using one engineered feature:
-    whether today's price breaks above the recent historical maximum.
-    """
-    prices = series.to_numpy(dtype=float)
-
-    if breakout_window <= 0:
-        raise ValueError("breakout_window must be positive.")
-
-    signal = np.zeros(prices.shape[0])
-    recent_high = np.full(prices.shape[0], np.nan)
-
-    for t in range(breakout_window, prices.shape[0]):
-        past_window = prices[t - breakout_window:t]
-        recent_high[t] = np.max(past_window)
-
-        if prices[t] > recent_high[t]:
-            signal[t] = 1.0
-        else:
-            signal[t] = 0.0
-
-    raw_signal = signal
-    signal = lag_signal_for_trading(raw_signal)
-    
-    position_change = np.diff(signal, prepend=0.0)
-    
-    signals = pd.DataFrame(index=series.index)
-    signals["raw_signal"] = raw_signal
-    signals["signal"] = signal
-    signals["position_change"] = position_change
-    signals["recent_high"] = recent_high
-    signals["breakout_strength"] = prices / recent_high - 1.0
-
-    return signals
-
-
-###################################################################
-# Simplidied long only short term reversal signal
-###################################################################
-def short_term_reversal_signal(
-    series,
-    lookback_window,
-    return_threshold,
-    holding_period=1,
-):
-    """
-    Long-only short-term reversal signal.
-
-    Signal idea:
-    If the stock has fallen strongly over the last lookback_window days,
-    the strategy invests for holding_period days. This is a long-only
-    adaptation of the short-term reversal idea in Jegadeesh (1990) and
-    Lehmann (1990), where recent losers tend to earn higher following
-    returns than recent winners.
-
-    Signal rule:
-    lookback_return_t = price_t / price_{t-lookback_window} - 1
-
-    entry_signal_t = 1 if lookback_return_t < return_threshold
-    entry_signal_t = 0 otherwise
-
-    signal_t = 1 for holding_period days after an entry signal
-    signal_t = 0 otherwise
-
-    Example:
-    lookback_window = 5, return_threshold = -0.05, holding_period = 5
-    means: if the stock lost more than 5% over the previous 5 trading days,
-    invest for the next 5 signal observations.
-
-    Parameters
-    ----------
-    series : pandas.Series
-        Adjusted close price series.
-    lookback_window : int
-        Number of past observations used to compute the recent return.
-    return_threshold : float
-        Negative return threshold that triggers the reversal signal.
-        Example: -0.05 means a loss larger than 5%.
-    holding_period : int, default 1
-        Number of observations for which the signal remains active after
-        an entry signal.
-
-    Returns
-    -------
-    signals : pandas.DataFrame
-        DataFrame with columns:
-        - signal: 1 if invested, 0 otherwise
-        - position_change: change in the signal from the previous row
-        - lookback_return: recent return used as the reversal feature
-        - entry_signal: raw event indicator before applying holding period
-    """
-    prices = series.to_numpy(dtype=float)
-
-    if lookback_window <= 0:
-        raise ValueError("lookback_window must be positive.")
-
-    if holding_period <= 0:
-        raise ValueError("holding_period must be positive.")
-
-    if return_threshold >= 0:
-        raise ValueError("return_threshold should be negative for a reversal signal.")
-
-    # Feature: recent return over the chosen lookback window.
-    lookback_return = percentage_change(prices, lookback_window)
-
-    entry_signal = np.zeros(prices.shape[0])
-    valid_rows = ~np.isnan(lookback_return)
-
-    # Event definition: recent loss is large enough to be classified as oversold.
-    entry_signal[valid_rows] = np.where(
-        lookback_return[valid_rows] < return_threshold,
-        1.0,
-        0.0,
-    )
-
-    signal = np.zeros(prices.shape[0])
-
-    # Apply a fixed holding period after every entry signal.
-    for start_index in range(prices.shape[0]):
-        if entry_signal[start_index] == 1.0:
-            end_index = min(start_index + holding_period, prices.shape[0])
-            signal[start_index:end_index] = 1.0
-
-    raw_signal = signal
-    signal = lag_signal_for_trading(raw_signal)
-    position_change = np.diff(signal, prepend=0.0)
-    
-    signals = pd.DataFrame(index=series.index)
-    signals["raw_signal"] = raw_signal
-    signals["signal"] = signal
-    signals["position_change"] = position_change
-    signals["lookback_return"] = lookback_return
-    signals["entry_signal"] = entry_signal
-
-    return signals
-
-
-
-
-####################################################
-# Moving average crossover signal
-####################################################
-# Based on Brock, Lakonishok and LeBaron (1992)
-def ma_signal(series, short_window, long_window):
-    """
-    Moving-average crossover signal.
-
-    Signal rule:
-    signal_t = 1 if MA_t(short_window) > MA_t(long_window)
-    signal_t = 0 otherwise
-
-    This is the canonical trend-following rule studied in
-    Brock, Lakonishok, and LeBaron (1992).
-
-    Parameters
-    ----------
-    series : pandas.Series
-        Adjusted close price series.
-    short_window : int
-        Window length for the short-term moving average.
-    long_window : int
-        Window length for the long-term moving average.
-
-    Returns
-    -------
-    signals : pandas.DataFrame
-        DataFrame with columns:
-        - signal: 1 if short MA > long MA, 0 otherwise
-        - position_change: +1 on entry, -1 on exit, 0 otherwise
-        - ma_short: short-term moving average series
-        - ma_long: long-term moving average series
-    """
-    if short_window >= long_window:
-        raise ValueError("short_window must be smaller than long_window.")
-
-    prices = series.to_numpy(dtype=float)
-
-    ma_short = moving_average(prices, short_window)
-    ma_long  = moving_average(prices, long_window)
-
-    # Signal is only valid once both moving averages have enough history.
-    signal = np.zeros(prices.shape[0])
-    valid_rows = ~np.isnan(ma_short) & ~np.isnan(ma_long)
-
-    signal[valid_rows] = np.where(
-        ma_short[valid_rows] > ma_long[valid_rows],
-        1.0,
-        0.0,
-    )
-
-    raw_signal = signal
-    signal = lag_signal_for_trading(raw_signal)
-    
-    position_change = np.diff(signal, prepend=0.0)
-    
-    signals = pd.DataFrame(index=series.index)
-    signals["raw_signal"]      = raw_signal
-    signals["signal"]          = signal
-    signals["position_change"] = position_change
-    signals["ma_short"]        = ma_short
-    signals["ma_long"]         = ma_long
-
-    return signals
-
-
-####################################################
-# Performance and statistics functions
-####################################################
-
-def compute_portfolio_value(df_position):
-    """
-    Compute total portfolio value at each time step.
-
-    Parameters
-    ----------
-    df_position : pandas.DataFrame
-        Position DataFrame with stock columns + 'cash' column.
-
-    Returns
-    -------
-    portfolio_value : numpy.ndarray
-        Total portfolio value (stocks + cash) at each time step.
-    """
-    return df_position.sum(axis=1).to_numpy(dtype=float)
-
-
-def compute_daily_returns(portfolio_value):
-    """
-    Compute daily simple returns from a portfolio value series.
-
-    Parameters
-    ----------
-    portfolio_value : numpy.ndarray
-
-    Returns
-    -------
-    daily_returns : numpy.ndarray
-        Array of length len(portfolio_value) - 1.
-    """
-    return portfolio_value[1:] / portfolio_value[:-1] - 1.0
-
-
-def annualized_return(daily_returns, trading_days=250):
-    """
-    Annualized mean return (arithmetic).
-    """
-    mean_daily = np.sum(daily_returns) / len(daily_returns)
-    return mean_daily * trading_days
-
-
-def annualized_volatility(daily_returns, trading_days=250):
-    """
-    Annualized volatility (standard deviation of daily returns).
-    """
-    mean_daily = np.sum(daily_returns) / len(daily_returns)
-    variance   = np.sum(np.square(daily_returns - mean_daily)) / len(daily_returns)
-    return np.sqrt(variance) * np.sqrt(trading_days)
-
-
-def sharpe_ratio(daily_returns, risk_free_rate=0.0, trading_days=250):
-    """
-    Annualized Sharpe ratio.
-
-    Parameters
-    ----------
-    daily_returns : numpy.ndarray
-    risk_free_rate : float
-        Annualized risk-free rate (e.g. 0.04 for 4%).
-    trading_days : int
-
-    Returns
-    -------
-    sharpe : float
-    """
-    ann_ret = annualized_return(daily_returns, trading_days)
-    ann_vol = annualized_volatility(daily_returns, trading_days)
-    if ann_vol == 0.0:
+    if total_growth <= 0.0 or number_of_periods <= 0:
         return np.nan
-    return (ann_ret - risk_free_rate) / ann_vol
+
+    return total_growth ** (periods_per_year / number_of_periods) - 1.0
 
 
-def maximum_drawdown(portfolio_value):
-    """
-    Maximum drawdown: the largest peak-to-trough decline in portfolio value.
+def annualized_volatility(returns, periods_per_year=250):
+    returns = np.asarray(returns, dtype=float)
 
-    Returns a value between 0 and 1 (e.g. 0.30 means -30%).
+    mean_return = np.sum(returns) / len(returns)
+    variance = np.sum((returns - mean_return) ** 2) / len(returns)
 
-    Parameters
-    ----------
-    portfolio_value : numpy.ndarray
-
-    Returns
-    -------
-    max_dd : float
-    """
-    running_max = np.maximum.accumulate(portfolio_value)
-    drawdowns   = portfolio_value / running_max - 1.0
-    return float(np.min(drawdowns))
+    return np.sqrt(variance * periods_per_year)
 
 
-def calmar_ratio(daily_returns, portfolio_value, trading_days=250):
-    """
-    Calmar ratio: annualized return divided by absolute maximum drawdown.
+def sharpe_ratio(returns, periods_per_year=250):
+    returns = np.asarray(returns, dtype=float)
+    volatility = annualized_volatility(returns, periods_per_year)
 
-    A higher Calmar ratio means better return per unit of drawdown risk.
-    """
-    ann_ret = annualized_return(daily_returns, trading_days)
-    max_dd  = maximum_drawdown(portfolio_value)
-    if max_dd == 0.0:
+    if volatility == 0.0:
         return np.nan
-    return ann_ret / abs(max_dd)
+
+    mean_return = np.sum(returns) / len(returns)
+
+    return mean_return * periods_per_year / volatility
 
 
-def win_rate(daily_returns):
-    """
-    Fraction of trading days with a positive return.
-    """
-    return float(np.sum(daily_returns > 0.0) / len(daily_returns))
+def maximum_drawdown(portfolio_values):
+    values = np.asarray(portfolio_values, dtype=float)
+
+    running_maximum = np.maximum.accumulate(values)
+    drawdowns = values / running_maximum - 1.0
+
+    return np.min(drawdowns)
 
 
-def compute_drawdown_series(portfolio_value):
-    """
-    Full drawdown time series (for plotting).
+def performance_statistics_from_values(portfolio_values, periods_per_year=250):
+    values = np.asarray(portfolio_values, dtype=float)
+    returns = portfolio_returns_from_values(values)
 
-    Returns
-    -------
-    drawdown_series : numpy.ndarray
-        Values between 0 and -1 at each time step.
-    """
-    running_max = np.maximum.accumulate(portfolio_value)
-    return portfolio_value / running_max - 1.0
-
-
-def compute_performance_table(label, daily_returns, portfolio_value, trading_days=250):
-    """
-    Collect all performance statistics into a dict for easy display.
-
-    Parameters
-    ----------
-    label : str
-        Name of the strategy or benchmark.
-    daily_returns : numpy.ndarray
-    portfolio_value : numpy.ndarray
-    trading_days : int
-
-    Returns
-    -------
-    stats : dict
-    """
     return {
-        "Strategy":             label,
-        "Ann. Return":          annualized_return(daily_returns, trading_days),
-        "Ann. Volatility":      annualized_volatility(daily_returns, trading_days),
-        "Sharpe Ratio":         sharpe_ratio(daily_returns, trading_days=trading_days),
-        "Max Drawdown":         maximum_drawdown(portfolio_value),
-        "Calmar Ratio":         calmar_ratio(daily_returns, portfolio_value, trading_days),
-        "Win Rate":             win_rate(daily_returns),
+        "Annualized Return": annualized_return(values, periods_per_year),
+        "Annualized Volatility": annualized_volatility(returns, periods_per_year),
+        "Sharpe Ratio": sharpe_ratio(returns, periods_per_year),
+        "Max Drawdown": maximum_drawdown(values)
     }
 
 
-if __name__ == "__main__":
-    pass
+def signal_dataframe(index, raw_signal, **extra_columns):
+    signal = np.asarray(raw_signal, dtype=float)
+    signal = np.where(np.isfinite(signal), signal, 0.0)
+    signal = np.where(signal > 0.0, 1.0, 0.0)
 
+    position_change = np.zeros(len(signal))
+    position_change[1:] = signal[1:] - signal[:-1]
+
+    signal_frame = pd.DataFrame(index=index)
+    signal_frame["signal"] = signal
+    signal_frame["position_change"] = position_change
+
+    for name, values in extra_columns.items():
+        signal_frame[name] = values
+
+    return signal_frame
+
+
+def apply_execution_delay(signal_frame, delay_days=1):
+    delayed_signal = (
+        signal_frame["signal"]
+        .shift(delay_days)
+        .fillna(0.0)
+        .to_numpy(dtype=float)
+    )
+
+    delayed = signal_frame.copy(deep=True)
+    delayed["signal"] = delayed_signal
+
+    position_change = np.zeros(len(delayed_signal))
+    position_change[1:] = delayed_signal[1:] - delayed_signal[:-1]
+
+    delayed["position_change"] = position_change
+
+    return delayed
+
+
+def single_signal_portfolio_values(price_values, signal_values, initial_value=1.0):
+    prices = np.asarray(price_values, dtype=float)
+    signals = np.asarray(signal_values, dtype=float)
+
+    portfolio_values = np.ones(len(prices)) * initial_value
+
+    for index in range(1, len(prices)):
+        asset_return = prices[index] / prices[index - 1] - 1.0
+        strategy_return = signals[index - 1] * asset_return
+        portfolio_values[index] = portfolio_values[index - 1] * (1.0 + strategy_return)
+
+    return portfolio_values
+
+
+def vix_term_structure_signal(
+    target_series,
+    vix_series,
+    vix3m_series,
+    ratio_threshold,
+    momentum_window,
+    momentum_threshold
+):
+    target_series = target_series.dropna()
+
+    vix = vix_series.reindex(target_series.index).to_numpy(dtype=float)
+    vix3m = vix3m_series.reindex(target_series.index).to_numpy(dtype=float)
+
+    vix_ratio = vix3m / vix
+    target_momentum = price_momentum(target_series, momentum_window).to_numpy(dtype=float)
+
+    signal = np.where(
+        (vix_ratio > ratio_threshold)
+        & (target_momentum > momentum_threshold),
+        1.0,
+        0.0
+    )
+
+    signal[:momentum_window] = 0.0
+
+    return signal_dataframe(
+        target_series.index,
+        signal,
+        vix_ratio=vix_ratio,
+        target_momentum=target_momentum
+    )
+
+
+def oil_energy_relative_strength_signal(
+    target_series,
+    oil_series,
+    market_series,
+    trend_window,
+    oil_momentum_window,
+    oil_momentum_threshold,
+    target_momentum_window,
+    target_momentum_threshold,
+    relative_strength_window,
+    relative_strength_threshold
+):
+    target_series = target_series.dropna()
+
+    target_prices = target_series.to_numpy(dtype=float)
+    oil = oil_series.reindex(target_series.index)
+    market = market_series.reindex(target_series.index)
+
+    trend_average = moving_average(target_series, trend_window).to_numpy(dtype=float)
+
+    oil_momentum = price_momentum(
+        oil,
+        oil_momentum_window
+    ).to_numpy(dtype=float)
+
+    target_momentum = price_momentum(
+        target_series,
+        target_momentum_window
+    ).to_numpy(dtype=float)
+
+    relative_strength = target_series / market
+
+    relative_strength_momentum = price_momentum(
+        relative_strength,
+        relative_strength_window
+    ).to_numpy(dtype=float)
+
+    signal = np.where(
+        (target_prices > trend_average)
+        & (oil_momentum > oil_momentum_threshold)
+        & (target_momentum > target_momentum_threshold)
+        & (relative_strength_momentum > relative_strength_threshold),
+        1.0,
+        0.0
+    )
+
+    warmup_period = max(
+        trend_window,
+        oil_momentum_window,
+        target_momentum_window,
+        relative_strength_window
+    )
+
+    signal[:warmup_period] = 0.0
+
+    return signal_dataframe(
+        target_series.index,
+        signal,
+        trend_average=trend_average,
+        oil_momentum=oil_momentum,
+        target_momentum=target_momentum,
+        relative_strength_momentum=relative_strength_momentum
+    )
+
+
+def ita_defensive_volatility_signal(
+    ita_series,
+    spy_series,
+    vix_series,
+    xlu_series,
+    xlp_series,
+    trend_window,
+    ita_momentum_window,
+    ita_momentum_threshold,
+    relative_strength_window,
+    relative_strength_threshold,
+    vix_average_window,
+    defensive_momentum_window,
+    defensive_momentum_threshold
+):
+    ita_prices = ita_series.to_numpy(dtype=float)
+
+    spy = spy_series.reindex(ita_series.index)
+    vix = vix_series.reindex(ita_series.index)
+    xlu = xlu_series.reindex(ita_series.index)
+    xlp = xlp_series.reindex(ita_series.index)
+
+    trend_average = moving_average(
+        ita_series,
+        trend_window
+    ).to_numpy(dtype=float)
+
+    ita_momentum = price_momentum(
+        ita_series,
+        ita_momentum_window
+    ).to_numpy(dtype=float)
+
+    relative_strength = ita_series / spy
+
+    relative_momentum = price_momentum(
+        relative_strength,
+        relative_strength_window
+    ).to_numpy(dtype=float)
+
+    vix_average = moving_average(
+        vix,
+        vix_average_window
+    ).to_numpy(dtype=float)
+
+    defensive_ratio = ((xlu + xlp) / 2.0) / spy
+
+    defensive_momentum = price_momentum(
+        defensive_ratio,
+        defensive_momentum_window
+    ).to_numpy(dtype=float)
+
+    vix_elevated = vix.to_numpy(dtype=float) > vix_average
+
+    signal = np.where(
+        (ita_prices > trend_average)
+        & (ita_momentum > ita_momentum_threshold)
+        & (relative_momentum > relative_strength_threshold)
+        & (
+            vix_elevated
+            | (defensive_momentum > defensive_momentum_threshold)
+        ),
+        1.0,
+        0.0
+    )
+
+    warmup_period = max(
+        trend_window,
+        ita_momentum_window,
+        relative_strength_window,
+        vix_average_window,
+        defensive_momentum_window
+    )
+
+    signal[:warmup_period] = 0.0
+
+    return signal_dataframe(
+        ita_series.index,
+        signal,
+        trend_average=trend_average,
+        ita_momentum=ita_momentum,
+        relative_momentum=relative_momentum,
+        vix_average=vix_average,
+        defensive_momentum=defensive_momentum
+    )
+
+
+#### My last signal
+def gold_safe_haven_signal(
+    gld_series,
+    tlt_series,
+    trend_window,          # e.g. 200
+    momentum_window,       # e.g. 126
+    gld_momentum_threshold,  # e.g. 0.0
+    tlt_momentum_threshold   # e.g. 0.0
+):
+    """
+    Gold safe-haven signal based on Antonacci (2014) dual momentum and Faber(2007)
+    trend following acorss asset classes
+
+    Invests in GLD (gold ETF) when three conditions are all true:
+    1. Gold is in an uptrend (price above its moving average)
+    2. Gold has a positive absolute momentum (higher than N days ago)
+    3. Long-Term Treasury bonds (TLT) also have positive momentum,
+    confirming a risk off enviroment where safe havens are in demand
+
+
+    """
+    gld_series = gld_series.dropna()
+
+    tlt = tlt_series.reindex(gld_series.index)
+
+    # Step 1: trend filter
+    # the idea : is todays gold price above the average of the last trend window days
+    # Making only invest in Gold when it is purely rising
+    trend_average = moving_average(
+        gld_series, trend_window
+    ).to_numpy(dtype=float)
+
+    # Step 2: gold momentum
+    # comparing gold prays troday with its price days ago
+    # if it is psositive then gold has been rising over the past 6 months
+    gld_momentum = price_momentum(
+        gld_series, momentum_window
+    ).to_numpy(dtype=float)
+
+    # Step 3: bond momentum (the "confirmation" filter)
+    # TLT price today compared with its price days ago.
+    # Rising bonds + rising gold together = investors fleeing equities. This avoids buying gold during commodity-driven rallies that have
+    # nothing to do qith fear
+    tlt_momentum = price_momentum(
+        tlt, momentum_window
+    ).to_numpy(dtype=float)
+
+    gld_prices = gld_series.to_numpy(dtype=float)
+
+    #all three conditions must be met simultaneosly
+    signal = np.where(
+        (gld_prices > trend_average)
+        & (gld_momentum > gld_momentum_threshold)
+        & (tlt_momentum > tlt_momentum_threshold),
+        1.0,
+        0.0
+    )
+
+    # warmup guard — exactly like your other signals
+    signal[:max(trend_window, momentum_window)] = 0.0
+
+    return signal_dataframe(
+        gld_series.index,
+        signal,
+        trend_average=trend_average,
+        gld_momentum=gld_momentum,
+        tlt_momentum=tlt_momentum
+    )
