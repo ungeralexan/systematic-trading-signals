@@ -17,7 +17,7 @@ def download_stock_price_data(tickers, start_date, end_date):
 
     Parameters
     ----------
-    tickers : list[str]
+    tickers : list
         Ticker symbols in the order that should appear in the output.
     start_date : str
         First date requested from Yahoo Finance
@@ -28,8 +28,7 @@ def download_stock_price_data(tickers, start_date, end_date):
     -------
     tuple[pandas.DataFrame, pandas.DataFrame]
         First element: price level series with dates as index and tickers as
-        columns.  Second element: multiplicative daily changes, where 1.02
-        means a positive return of 2 percent.
+        columns.  
     """
     raw = Ticker(tickers).history(start=start_date, end=end_date)
     close_prices = raw["close"].unstack(level=0)
