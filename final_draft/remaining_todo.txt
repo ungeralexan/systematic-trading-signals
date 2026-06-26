@@ -57,3 +57,7 @@ Ideas worth taking from them
    We should not copy their MACD/RSI/Bollinger approach. Our advantage is that
    our signals are economically motivated: volatility regime, oil/energy
    conditions and gold safe-haven exposure.
+
+
+
+Scaling Graphen im Resaerch bei Signal 0 und 1 
