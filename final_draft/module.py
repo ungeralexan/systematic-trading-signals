@@ -296,12 +296,13 @@ def apply_execution_delay(signal_frame, delay_days=1):
     the portfolio from date t+1 onward.  This reduces look-ahead bias in the
     backtest.
     """
-    delayed_signal = (
-        signal_frame["signal"]
-        .shift(delay_days)
-        .fillna(0.0)
-        .to_numpy(dtype=float)
-    )
+    signal = signal_frame["signal"].to_numpy(dtype=float)
+    delayed_signal = np.zeros(len(signal))
+
+    if delay_days <= 0:
+        delayed_signal[:] = signal
+    elif delay_days < len(signal):
+        delayed_signal[delay_days:] = signal[:-delay_days]
 
     delayed = signal_frame.copy(deep=True)
     delayed["signal"] = delayed_signal
@@ -426,7 +427,12 @@ def oil_energy_relative_strength_signal(
         target_momentum_window,
     ).to_numpy(dtype=float)
 
-    relative_strength = target_series / market
+    market_prices = market.to_numpy(dtype=float)
+    relative_strength_values = target_prices / market_prices
+    relative_strength = pd.Series(
+        relative_strength_values,
+        index=target_series.index,
+    )
 
     relative_strength_momentum = price_momentum(
         relative_strength,
