@@ -1,0 +1,61 @@
+Things we still need to clean up before submission
+
+
+1. Double-check that the final notebooks run from top to bottom.
+   After the renaming and small cleanup fixes, restart the kernel and run all cells
+   once. The professor said the notebooks need to run stand-alone, so this is
+   probably the most important final check.
+
+2. Optional but safer: adjust the rolling Sharpe calculation.
+   The assessment notebook uses .mean(), .std() and pct_change() in one graph
+   helper section. Because the professor emphasized transparent numerical
+   calculations, we could rewrite that small part with NumPy arrays and np.sum,
+   like the statistics functions in module.py.
+
+3. Check the data dependency.
+   module.py uses yahooquery. If the professor's machine does not have it, the
+   notebooks will fail. We should either make sure this dependency is allowed
+   and available, or add a very short note about it.
+
+
+What last year's G8 notebook did better than us
+
+They made the assessment notebook feel more complete as a presentation object.
+There are more visible plots, more intermediate explanations, and more final
+performance measures. 
+
+They also included a wider set of statistics:
+- Sharpe ratio
+- Sortino ratio
+- maximum drawdown
+- Value at Risk
+- buy-and-hold comparison
+
+Our statistics are cleaner and more consistent, but theirs looks broader at
+first glance. Should we take some from them ? 
+
+They also showed the individual signals visually. For example, they plotted
+price series together with buy/sell markers or indicator bands. We currently
+focus more on final strategy performance. Their style is useful because it lets
+the audience actually see what a signal is doing.
+
+
+Ideas worth taking from them
+
+1. Add one or two signal-specific plots.
+   We do not need huge charts for everything, but it would help to show at
+   least one example where the signal turns on and off. For example:
+   - SPY price with shaded periods where the SPY/VIX signal is active
+   - GLD price with shaded periods where the gold signal is active
+
+2. Add one broader statistics table.
+   We already have annualized return, volatility, Sharpe and drawdown. We could
+   add Sortino ratio and maybe Value at Risk, but only if we implement them
+   cleanly in NumPy and keep the explanation short.
+
+
+3. Make the final assessment notebook more presentation-friendly.
+   G8's notebook is not necessarily better methodologically, but it feels more
+   like a document someone can scroll through during a presentation. We should
+   make sure our headings, plots and final tables guide the reader without us
+   having to explain every code cell.
