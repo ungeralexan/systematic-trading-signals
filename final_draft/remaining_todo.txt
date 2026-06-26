@@ -1,41 +1,21 @@
 Things we still need to clean up before submission
 
-1. Fix the file names for the final hand-in.
-   The professor expects these exact files:
-   - assessment_notebook.ipynb
-   - research_notebook.ipynb
-   - module.py
 
-   Right now the newer files still have spaces / version names, so we should
-   rename or copy the final versions before sending them.
-
-2. Make sure the notebooks can actually import the module.
-   Both notebooks use:
-   import module
-
-   So the Python file must be called module.py. If it stays as "module V1.py",
-   the notebooks will not run on another computer.
-
-3. Fix Signal 2 parameters in the assessment notebook.
-   The research notebook selected:
-   - trend window: 100
-   - momentum window: 63
-   - GLD momentum threshold: 0.0
-   - TLT momentum threshold: -0.02
-
-   The assessment notebook should use the same values. At the moment it uses
-   200 and 126 for the first two, which does not match the research result.
-
-4. Double-check that the final notebooks run from top to bottom.
-   After the renaming and parameter fix, restart the kernel and run all cells
+1. Double-check that the final notebooks run from top to bottom.
+   After the renaming and small cleanup fixes, restart the kernel and run all cells
    once. The professor said the notebooks need to run stand-alone, so this is
    probably the most important final check.
 
-5. Optional but safer: adjust the rolling Sharpe calculation.
-   The assessment notebook uses NumPy array .mean() and .std() in one helper.
-   This is still NumPy, but because the professor emphasized transparent
-   numerical calculations, we could rewrite that small part with np.sum, like
-   the statistics functions in module.py.
+2. Optional but safer: adjust the rolling Sharpe calculation.
+   The assessment notebook uses .mean(), .std() and pct_change() in one graph
+   helper section. Because the professor emphasized transparent numerical
+   calculations, we could rewrite that small part with NumPy arrays and np.sum,
+   like the statistics functions in module.py.
+
+3. Check the data dependency.
+   module.py uses yahooquery. If the professor's machine does not have it, the
+   notebooks will fail. We should either make sure this dependency is allowed
+   and available, or add a very short note about it.
 
 
 What last year's G8 notebook did better than us
@@ -79,4 +59,3 @@ Ideas worth taking from them
    like a document someone can scroll through during a presentation. We should
    make sure our headings, plots and final tables guide the reader without us
    having to explain every code cell.
-
