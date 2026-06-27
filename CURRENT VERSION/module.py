@@ -212,10 +212,15 @@ def sharpe_ratio(returns, periods_per_year=250):
     return mean_return * periods_per_year / volatility
 
 def sortino_ratio(returns, periods_per_year=250):
+    returns = np.asarray(returns, dtype=float)
     negative_returns = returns[returns < 0.0]
     mean_return = np.sum(returns) / len(returns)
     downside_variance = np.sum(negative_returns ** 2) / len(returns)
     downside_deviation = np.sqrt(downside_variance * periods_per_year)
+
+    if downside_deviation == 0.0:
+        return np.nan
+
     return mean_return * periods_per_year / downside_deviation
 
     
@@ -529,3 +534,410 @@ def gold_safe_haven_signal(
         gld_momentum=gld_momentum,
         tlt_momentum=tlt_momentum,
     )
+
+
+# Plotting helpers used by the assessment notebook
+
+def drawdown_percent(curve):
+    """
+    Compute the percentage drawdown from the running historical peak.
+    """
+    values = np.asarray(curve, dtype=float)
+    running_peak = np.maximum.accumulate(values)
+    return (values - running_peak) / running_peak * 100.0
+
+
+def rolling_sharpe_ratio(returns, window_length=250):
+    """
+    Compute a rolling annualized Sharpe ratio over a fixed return window.
+    """
+    returns = np.asarray(returns, dtype=float)
+    rolling_values = np.full(len(returns), np.nan)
+
+    for index in range(window_length, len(returns)):
+        rolling_values[index] = sharpe_ratio(
+            returns[index - window_length:index]
+        )
+
+    return rolling_values
+
+
+def plot_drawdown_and_rolling_sharpe(
+    portfolio_curve,
+    benchmark_curve,
+    dates,
+    rolling_window=250,
+):
+    """
+    Plot drawdown and rolling Sharpe ratio for the strategy and benchmark.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import PercentFormatter
+
+    dates = np.asarray(dates)
+    portfolio_values = np.asarray(portfolio_curve, dtype=float)
+    benchmark_values = np.asarray(benchmark_curve, dtype=float)
+
+    portfolio_returns = portfolio_returns_from_values(portfolio_values)
+    benchmark_returns = portfolio_returns_from_values(benchmark_values)
+    return_dates = dates[1:]
+
+    fig, (axes1, axes2) = plt.subplots(2, 1, figsize=(12, 12))
+
+    axes1.fill_between(
+        dates,
+        drawdown_percent(portfolio_values),
+        alpha=0.6,
+        color="steelblue",
+        label="Our Strategy",
+    )
+    axes1.fill_between(
+        dates,
+        drawdown_percent(benchmark_values),
+        alpha=0.35,
+        color="tomato",
+        label="Benchmark AOR ETF",
+    )
+    axes1.yaxis.set_major_formatter(PercentFormatter(xmax=100))
+    axes1.set_title("Drawdown")
+    axes1.set_ylabel("Drawdown (%)")
+    axes1.legend()
+    axes1.grid(alpha=0.4)
+    plt.tight_layout()
+
+    axes2.plot(
+        return_dates,
+        rolling_sharpe_ratio(portfolio_returns, rolling_window),
+        color="steelblue",
+        label="Our Strategy",
+    )
+    axes2.plot(
+        return_dates,
+        rolling_sharpe_ratio(benchmark_returns, rolling_window),
+        color="tomato",
+        linestyle="--",
+        label="Benchmark AOR ETF",
+    )
+    axes2.axhline(0, color="black", linewidth=0.8, linestyle=":")
+    axes2.axhline(1, color="green", linewidth=0.8, linestyle=":", alpha=0.6)
+    axes2.set_title(f"Rolling Sharpe Ratio ({rolling_window}-Days)")
+    axes2.legend()
+    axes2.grid(alpha=0.4)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_entry_exit_times(
+    tickers,
+    df_prices,
+    df_position_open,
+    df_position_changes,
+):
+    """
+    Plot normalized prices together with active signal periods and trades.
+    """
+    import matplotlib.pyplot as plt
+
+    signal_meta = [
+        (tickers[0], "Signal 0 – SPY (VIX Term Structure)", "steelblue"),
+        (tickers[1], "Signal 1 – XLE (Oil Momentum)", "darkorange"),
+        (tickers[2], "Signal 2 – GLD (Gold Safe-Haven)", "goldenrod"),
+    ]
+
+    fig, axes = plt.subplots(
+        3,
+        1,
+        figsize=(14, 10),
+        sharex=True,
+        sharey=True,
+    )
+
+    fill_top = max(
+        (df_prices[ticker] / df_prices[ticker].iloc[0]).max()
+        for ticker, _, _ in signal_meta
+    ) * 1.12
+
+    for ax, (ticker, title, color) in zip(axes, signal_meta):
+        price = df_prices[ticker]
+        price_norm = price / price.iloc[0]
+
+        ax.plot(
+            price.index,
+            price_norm,
+            color=color,
+            linewidth=1.2,
+            alpha=0.90,
+            label="Performance of the signal",
+        )
+
+        signal = df_position_open[ticker]
+        ax.fill_between(
+            signal.index,
+            0,
+            fill_top,
+            where=signal == 1,
+            alpha=0.12,
+            color=color,
+            step="post",
+            label="Signal active",
+        )
+
+        changes = df_position_changes[ticker]
+        buy_dates = changes[changes == 1].index
+        sell_dates = changes[changes == -1].index
+        offset = price_norm.max() * 0.06
+
+        ax.scatter(
+            buy_dates,
+            price_norm.loc[buy_dates] - offset,
+            marker="^",
+            color="green",
+            s=40,
+            zorder=5,
+            label="Buy",
+        )
+        ax.scatter(
+            sell_dates,
+            price_norm.loc[sell_dates] + offset,
+            marker="v",
+            color="red",
+            s=40,
+            zorder=5,
+            label="Sell",
+        )
+
+        ax.set_title(
+            f"{title}  |  {len(buy_dates)} Buy Times, "
+            f"{len(sell_dates)} Sell Times",
+            fontsize=10,
+        )
+        ax.set_ylabel("Growth of €1 Invested")
+        ax.legend(fontsize=8, loc="upper left")
+        ax.grid(True, alpha=0.3)
+
+    axes[0].set_ylim(0, fill_top)
+    axes[-1].set_xlabel("Date")
+    fig.suptitle("Entry Time / Exit Time", fontsize=13, y=1.01)
+    plt.tight_layout()
+    plt.show()
+
+
+def isolated_signal_curve(
+    ticker,
+    df_prices,
+    df_price_changes,
+    df_position_changes,
+    initial_cash=1.0,
+    capital_fraction=0.30,
+):
+    """
+    Simulate one signal by itself using the same allocation rule as the
+    combined strategy.
+    """
+    invested_value = 0.0
+    cash_value = initial_cash
+    values = []
+
+    for index in df_prices.index:
+        position_change = df_position_changes.loc[index, ticker]
+        price_change = df_price_changes.loc[index, ticker]
+
+        if position_change < 0 and invested_value > 0.0:
+            cash_value += invested_value
+            invested_value = 0.0
+
+        if invested_value > 0.0:
+            invested_value *= price_change
+
+        if position_change > 0 and cash_value > 0.0:
+            amount = cash_value * capital_fraction
+            invested_value += amount
+            cash_value -= amount
+
+        values.append(invested_value + cash_value)
+
+    curve = pd.Series(values, index=df_prices.index)
+    return curve / curve.iloc[0]
+
+
+def plot_signal_value_analysis(
+    tickers,
+    df_prices,
+    df_price_changes,
+    df_position_open,
+    df_position_changes,
+    df_position,
+    initial_cash=1.0,
+    capital_fraction=0.30,
+):
+    """
+    Plot isolated signal curves, signal activity, and summary metrics.
+    """
+    import matplotlib.pyplot as plt
+
+    signal_curves = {
+        ticker: isolated_signal_curve(
+            ticker,
+            df_prices,
+            df_price_changes,
+            df_position_changes,
+            initial_cash=initial_cash,
+            capital_fraction=capital_fraction,
+        )
+        for ticker in tickers[:-1]
+    }
+
+    portfolio_values = df_position.sum(axis=1)
+    portfolio_curve = portfolio_values / portfolio_values.iloc[0]
+    benchmark_values = df_prices[tickers[-1]]
+    benchmark_curve = benchmark_values / benchmark_values.iloc[0]
+    dates = df_prices.index
+
+    colors = {
+        "SPY_VIX": "#2c7bb6",
+        "XLE_OIL": "#d7191c",
+        "GLD_GOLD": "#e6a817",
+        "Combined": "#2ca02c",
+        "Benchmark": "#777777",
+    }
+    labels = {
+        "SPY_VIX": "Signal 0 – SPY (VIX Term-Structure)",
+        "XLE_OIL": "Signal 1 – XLE (Crude Oil Momentum)",
+        "GLD_GOLD": "Signal 2 – GLD (Gold Safe-Haven)",
+        "Combined": "Combined Strategy",
+        "Benchmark": "Benchmark AOR",
+    }
+
+    fig = plt.figure(figsize=(14, 16))
+    grid = fig.add_gridspec(
+        3,
+        1,
+        height_ratios=[3.2, 1.45, 1.35],
+        hspace=0.38,
+    )
+    fig.suptitle("Signal Value Analysis", fontsize=15, fontweight="bold",
+                 y=0.975)
+
+    ax_perf = fig.add_subplot(grid[0])
+    ax_heat = fig.add_subplot(grid[1], sharex=ax_perf)
+    ax_tbl = fig.add_subplot(grid[2])
+
+    for ticker in tickers[:-1]:
+        ax_perf.plot(
+            dates,
+            signal_curves[ticker],
+            color=colors[ticker],
+            label=labels[ticker],
+            linewidth=1.5,
+            alpha=0.85,
+        )
+
+    ax_perf.plot(
+        dates,
+        portfolio_curve,
+        color=colors["Combined"],
+        linewidth=2.2,
+        label=labels["Combined"],
+    )
+    ax_perf.plot(
+        dates,
+        benchmark_curve,
+        color=colors["Benchmark"],
+        linewidth=1.4,
+        linestyle="--",
+        alpha=0.7,
+        label=labels["Benchmark"],
+    )
+    ax_perf.axhline(1, color="black", linewidth=0.6, linestyle=":")
+    ax_perf.set_title(
+        "Cumulative Value (Growth of €1 per Signal, isolated with "
+        "30% allocation rule)",
+        fontweight="bold",
+    )
+    ax_perf.set_ylabel("Portfolio Value (normalized)")
+    ax_perf.yaxis.set_major_formatter(
+        plt.FuncFormatter(lambda value, _: f"€{value:.2f}")
+    )
+    ax_perf.legend(fontsize=8, loc="upper left")
+    ax_perf.grid(alpha=0.35)
+    ax_perf.spines[["top", "right"]].set_visible(False)
+
+    for index, ticker in enumerate(tickers[:-1]):
+        active = df_position_open[ticker].values.astype(float)
+        ax_heat.fill_between(
+            dates,
+            index,
+            index + active * 0.85,
+            color=colors[ticker],
+            alpha=0.65,
+            linewidth=0,
+        )
+
+    ax_heat.set_yticks(
+        [0.42, 1.42, 2.42],
+        labels=[labels[ticker] for ticker in tickers[:-1]],
+    )
+    ax_heat.tick_params(axis="y", labelsize=9)
+    ax_heat.set_ylim(0, 3)
+    ax_heat.set_title("Signal Activity  (colored = invested)",
+                      fontweight="bold", pad=10)
+    ax_heat.grid(alpha=0.2, axis="x")
+    ax_heat.spines[["top", "right", "left"]].set_visible(False)
+
+    items = list(tickers[:-1]) + ["Combined", "Benchmark"]
+    all_curves = {
+        **signal_curves,
+        "Combined": portfolio_curve,
+        "Benchmark": benchmark_curve,
+    }
+    column_labels = [
+        "Annualized Return",
+        "Max Drawdown",
+        "Sharpe Ratio",
+        "Sortino Ratio",
+        "Active (%)",
+    ]
+
+    data = []
+    for key in items:
+        curve = all_curves[key]
+
+        if key in tickers[:-1]:
+            active_values = df_position_open[key].to_numpy(dtype=float)
+            active_share = np.sum(active_values) / len(active_values)
+            active_text = f"{active_share * 100:.0f}%"
+        else:
+            active_text = "–"
+
+        values = np.asarray(curve, dtype=float)
+        returns = portfolio_returns_from_values(values)
+
+        data.append([
+            f"{annualized_return(values) * 100:+.1f}%",
+            f"{drawdown_percent(values).min():.1f}%",
+            f"{sharpe_ratio(returns):.2f}",
+            f"{sortino_ratio(returns):.2f}",
+            active_text,
+        ])
+
+    ax_tbl.axis("off")
+    table = ax_tbl.table(
+        cellText=data,
+        rowLabels=[labels[key].split("–")[-1].strip() for key in items],
+        colLabels=column_labels,
+        cellLoc="center",
+        loc="center",
+        bbox=[0.03, 0.02, 0.94, 0.78],
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(9.5)
+
+    for index, key in enumerate(items):
+        table[(index + 1, -1)].set_facecolor(colors[key] + "44")
+        for column in range(len(column_labels)):
+            table[(index + 1, column)].set_facecolor(colors[key] + "18")
+
+    ax_tbl.set_title("Performance Metrics", fontweight="bold", pad=8)
+
+    fig.subplots_adjust(top=0.94, bottom=0.04)
+    plt.show()
