@@ -211,7 +211,14 @@ def sharpe_ratio(returns, periods_per_year=250):
 
     return mean_return * periods_per_year / volatility
 
+def sortino_ratio(returns, periods_per_year=250):
+    negative_returns = returns[returns < 0.0]
+    mean_return = np.sum(returns) / len(returns)
+    downside_variance = np.sum(negative_returns ** 2) / len(returns)
+    downside_deviation = np.sqrt(downside_variance * periods_per_year)
+    return mean_return * periods_per_year / downside_deviation
 
+    
 def maximum_drawdown(portfolio_values):
     """
     Compute the maximum drawdown of a portfolio value path.
@@ -219,7 +226,6 @@ def maximum_drawdown(portfolio_values):
     Drawdown measures the percentage loss from the previous running maximum.
     """
     values = np.asarray(portfolio_values, dtype=float)
-
     running_maximum = np.maximum.accumulate(values)
     drawdowns = values / running_maximum - 1.0
 
@@ -240,9 +246,9 @@ def performance_statistics_from_values(portfolio_values, periods_per_year=250):
         "Annualized Return": annualized_return(values, periods_per_year),
         "Annualized Volatility": annualized_volatility(
             returns,
-            periods_per_year,
-        ),
+            periods_per_year,),
         "Sharpe Ratio": sharpe_ratio(returns, periods_per_year),
+        "Sortino Ratio": sortino_ratio(returns, periods_per_year),
         "Max Drawdown": maximum_drawdown(values),
     }
 
